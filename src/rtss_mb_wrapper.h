@@ -2,15 +2,15 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 /**
- * @file rtss_mb_api.h
+ * @file rtss_mb_wrapper.h
  * @brief RTSS Mailbox API Header
  * 
  * This file contains the API declarations for RTSS mailbox communication
  * used by the CAN daemon.
  */
 
-#ifndef RTSS_MB_API_H
-#define RTSS_MB_API_H
+#ifndef RTSS_MB_WRAPPER_H
+#define RTSS_MB_WRAPPER_H
 
 #include "rtss_can_structures.h"
 #include "rtss_mailbox.h"
@@ -163,4 +163,4 @@ int rtss_mb_read_shared_timeout(struct SailClientDataType *pClientData, void *pD
  */
 int rtss_mb_close_shared(struct SailClientDataType **ppClientData);
 
-#endif /* RTSS_MB_API_H */
+#endif /* RTSS_MB_WRAPPER_H */

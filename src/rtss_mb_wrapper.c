@@ -2,14 +2,14 @@
 // SPDX-License-Identifier: BSD-3-Clause
 
 /*
- * @file rtss_mb_api.c
+ * @file rtss_mb_wrapper.c
  * @brief RTSS Mailbox API Implementation
  *
  * This file implements the RTSS mailbox API wrapper functions for the CAN daemon.
  * It provides helper functions and utilities for RTSS mailbox communication.
  */
 
-#include "rtss_mb_api.h"
+#include "rtss_mb_wrapper.h"
 #include "rtss_can_logging.h"
 #include "rtss_can_config.h"
 #include <stdio.h>

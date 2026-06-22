@@ -101,8 +101,7 @@ target_include_directories(sail_umd PUBLIC
 set(DAEMON_SOURCES
     rtss_can.c
     rtss_can_logging.c
-    rtss_mb_api.c
-    # rtss_can_baud_configs.c - Excluded due to AUTOSAR dependencies
+    rtss_mb_wrapper.c
 )
 
 # Header files
@@ -110,7 +109,7 @@ set(DAEMON_HEADERS
     rtss_can_config.h
     rtss_can_structures.h
     rtss_can_logging.h
-    rtss_mb_api.h
+    rtss_mb_wrapper.h
     rtss_can_baud_config.h
 )
 

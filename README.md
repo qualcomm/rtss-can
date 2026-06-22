@@ -308,14 +308,14 @@ The default runtime logging configuration in `parse_command_line()` is syslog at
 		├── rtss_can_baud_config.h      # Supported baud-rate configuration IDs
 		├── rtss_can_logging.c          # Logging implementation
 		├── rtss_can_logging.h          # Logging API
-		├── rtss_mb_api.c               # RTSS mailbox wrapper implementation
-		└── rtss_mb_api.h               # RTSS mailbox wrapper API
+		├── rtss_mb_wrapper.c               # RTSS mailbox wrapper implementation
+		└── rtss_mb_wrapper.h               # RTSS mailbox wrapper API
 ```
 
 ### Key source files
 
 - `src/rtss_can.c`: daemon main loop, command-line parsing, configuration loading, VCAN setup, SocketCAN handling, RTSS mailbox forwarding, signal handling, and cleanup.
-- `src/rtss_mb_api.c`: wrappers around RTSS mailbox operations for shared TX/RX channels.
+- `src/rtss_mb_wrapper.c`: wrappers around RTSS mailbox operations for shared TX/RX channels.
 - `src/rtss_can_logging.c`: syslog, console, and file logging implementation.
 - `src/rtss_can_baud_config.h`: supported CAN-FD baud-rate configuration IDs.
 - `src/rtss_can_structures.h`: mailbox packet layouts.

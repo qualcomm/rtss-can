@@ -39,7 +39,7 @@
 #include "rtss_can_structures.h"
 #include "rtss_can_logging.h"
 #include "rtss_can_baud_config.h"
-#include "rtss_mb_api.h"
+#include "rtss_mb_wrapper.h"
 #include <pthread.h>
 
 /* Constants and Configuration */
@@ -822,7 +822,7 @@ static int send_packet_to_rtss(const struct can_mb_packet *packet, int controlle
 		return -1;
 	}
 
-	/* Send packet using shared TX client via rtss_mb_api */
+	/* Send packet using shared TX client via rtss_mb_wrapper */
 	ret = rtss_mb_write_shared(pSailTxClient, (void *)packet, sizeof(*packet));
 	if (ret < 0) {
 		LOG_ERROR_MSG("RTSS", "Failed to write to RTSS mailbox: %d", ret);
