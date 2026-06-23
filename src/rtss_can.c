@@ -90,9 +90,9 @@ struct daemon_state {
 /* Global daemon state */
 static struct daemon_state g_daemon_state;
 
-/* Global RTSS mailbox clients - shared by all controllers */
-static struct SailClientDataType *pSailTxClient;
-static struct SailClientDataType *pSailRxClient;
+/* Global RTSS mailbox handles - shared by all controllers */
+static struct rtss_mb_handle *pTxHandle;
+static struct rtss_mb_handle *pRxHandle;
 
 /* RX thread for receiving data from RTSS */
 static pthread_t RxThreadHandle;
@@ -511,24 +511,24 @@ static int initialize_daemon(void)
 	FD_ZERO(&g_daemon_state.read_fds);
 	g_daemon_state.max_fd = -1;
 
-	/* Initialize shared RTSS TX client */
-	LOG_INFO_MSG("INIT", "Initializing shared RTSS TX client");
-	ret = rtss_mb_init_shared_tx(&pSailTxClient);
+	/* Open shared RTSS TX mailbox */
+	LOG_INFO_MSG("INIT", "Initializing shared RTSS TX mailbox");
+	ret = rtss_mb_init_shared_tx(&pTxHandle);
 	if (ret != 0) {
-		LOG_ERROR_MSG("INIT", "Failed to initialize shared RTSS TX client: %d", ret);
+		LOG_ERROR_MSG("INIT", "Failed to init shared RTSS TX mailbox: %d", ret);
 		return -1;
 	}
-	LOG_INFO_MSG("INIT", "Shared RTSS TX client initialized successfully");
+	LOG_INFO_MSG("INIT", "Shared RTSS TX mailbox init successfully");
 
-	/* Initialize shared RTSS RX client */
-	LOG_INFO_MSG("INIT", "Initializing shared RTSS RX client");
-	ret = rtss_mb_init_shared_rx(&pSailRxClient);
+	/* Initialize shared RTSS RX mailbox */
+	LOG_INFO_MSG("INIT", "Init shared RTSS RX mailbox");
+	ret = rtss_mb_init_shared_rx(&pRxHandle);
 	if (ret != 0) {
-		LOG_ERROR_MSG("INIT", "Failed to initialize shared RTSS RX client: %d", ret);
-		rtss_mb_close_shared(&pSailTxClient);
+		LOG_ERROR_MSG("INIT", "Failed to init shared RTSS RX mailbox: %d", ret);
+		rtss_mb_close_shared(&pTxHandle);
 		return -1;
 	}
-	LOG_INFO_MSG("INIT", "Shared RTSS RX client initialized successfully");
+	LOG_INFO_MSG("INIT", "Shared RTSS RX mailbox init successfully");
 
 	/* Start RX thread */
 	LOG_INFO_MSG("INIT", "Starting RX thread for RTSS mailbox");
@@ -536,8 +536,8 @@ static int initialize_daemon(void)
 	ret = pthread_create(&RxThreadHandle, NULL, RxThreadHandler, NULL);
 	if (ret != 0) {
 		LOG_ERROR_MSG("INIT", "Failed to create RX thread: %d", ret);
-		rtss_mb_close_shared(&pSailTxClient);
-		rtss_mb_close_shared(&pSailRxClient);
+		rtss_mb_close_shared(&pTxHandle);
+		rtss_mb_close_shared(&pRxHandle);
 		return -1;
 	}
 	LOG_INFO_MSG("INIT", "RX thread started successfully");
@@ -816,14 +816,14 @@ static int send_packet_to_rtss(const struct can_mb_packet *packet, int controlle
 {
 	int ret;
 
-	/* Validate shared TX client */
-	if (pSailTxClient == NULL) {
-		LOG_ERROR_MSG("RTSS", "Shared RTSS TX client not initialized");
+	/* Validate shared TX handle */
+	if (pTxHandle == NULL) {
+		LOG_ERROR_MSG("RTSS", "Shared RTSS TX handle not initialized");
 		return -1;
 	}
 
-	/* Send packet using shared TX client via rtss_mb_wrapper */
-	ret = rtss_mb_write_shared(pSailTxClient, (void *)packet, sizeof(*packet));
+	/* Send packet using shared TX handle via rtss_mb_wrapper */
+	ret = rtss_mb_write_shared(pTxHandle, (void *)packet, sizeof(*packet));
 	if (ret < 0) {
 		LOG_ERROR_MSG("RTSS", "Failed to write to RTSS mailbox: %d", ret);
 		return -1;
@@ -941,7 +941,6 @@ static void *RxThreadHandler(void *pArg)
 	struct can_mb_packet packet;
 	struct canfd_frame frame;
 	int ret;
-	const int READ_TIMEOUT_MS = 500;  /* 500ms timeout for interruptible reads */
 	int controller_id;
 	struct can_controller_state *ctrl;
 	ssize_t nbytes;
@@ -950,25 +949,16 @@ static void *RxThreadHandler(void *pArg)
 
 	LOG_INFO_MSG("RX_THREAD", "RX thread started, listening on shared RTSS RX channel");
 
-	while (bRxThreadRunning) {
-		/* Read packet from shared RTSS RX mailbox with timeout */
-		ret = rtss_mb_read_shared_timeout(pSailRxClient, &packet, sizeof(packet), READ_TIMEOUT_MS);
+	for (;;) {
+		/* Blocking read; bRxThreadRunning checked after each return */
+		ret = rtss_mb_read_shared(pRxHandle, &packet, sizeof(packet));
+
+		if (!bRxThreadRunning)
+			break;
 
 		if (ret < 0) {
-			/* Error occurred */
-			if (!bRxThreadRunning)
-				/* Thread is shutting down */
-				break;
 			LOG_ERROR_MSG("RX_THREAD", "Failed to read from RTSS RX mailbox: %d", ret);
-			usleep(100000);  /* 100ms delay before retry */
-			continue;
-		}
-
-		if (ret == 0) {
-			/* Timeout - no data available, check if we should continue */
-			if (!bRxThreadRunning)
-				/* Shutdown requested */
-				break;
+			usleep(100000);
 			continue;
 		}
 
@@ -1097,27 +1087,30 @@ static void cleanup_daemon(void)
 
 	LOG_INFO_MSG("CLEANUP", "Cleaning up daemon resources");
 
-	/* Stop RX thread */
-	if (bRxThreadRunning) {
+	/* Stop RX thread:
+	 * 1. Clear the flag so the thread exits cleanly after its current read.
+	 * 2. pthread_cancel() interrupts the blocking rtss_mb_read() if the
+	 *    library uses a POSIX cancellation point (e.g. read/poll syscall).
+	 *    It is a no-op backstop for mailbox implementations that do not.
+	 */
+	if (RxThreadHandle) {
 		LOG_INFO_MSG("CLEANUP", "Stopping RX thread");
 		bRxThreadRunning = 0;
-
-		/* Wait for RX thread to exit */
+		pthread_cancel(RxThreadHandle);
 		pthread_join(RxThreadHandle, NULL);
+		RxThreadHandle = 0;
 		LOG_INFO_MSG("CLEANUP", "RX thread stopped");
 	}
 
-	/* Close shared RTSS clients */
-	if (pSailTxClient != NULL) {
-		LOG_INFO_MSG("CLEANUP", "Closing shared RTSS TX client");
-		rtss_mb_close_shared(&pSailTxClient);
-		pSailTxClient = NULL;
+	/* Close shared RTSS mailbox handles */
+	if (pTxHandle != NULL) {
+		LOG_INFO_MSG("CLEANUP", "Closing shared RTSS TX handle");
+		rtss_mb_close_shared(&pTxHandle);
 	}
 
-	if (pSailRxClient != NULL) {
-		LOG_INFO_MSG("CLEANUP", "Closing shared RTSS RX client");
-		rtss_mb_close_shared(&pSailRxClient);
-		pSailRxClient = NULL;
+	if (pRxHandle != NULL) {
+		LOG_INFO_MSG("CLEANUP", "Closing shared RTSS RX handle");
+		rtss_mb_close_shared(&pRxHandle);
 	}
 
 	/* Close controller sockets */

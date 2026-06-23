@@ -76,26 +76,8 @@ endif()
 # Include directories
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
 include_directories(${SYSROOTINC_PATH})
-include_directories(${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/include)
-include_directories(${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/src)
 
 include_directories(${SYSROOT_INCLUDEDIR})
-
-# Build sail-mailbox library locally
-# Define sail-mailbox source files
-set(RTSS_MAILBOX_SOURCES
-    ${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/src/sail_mbox_core.c
-    ${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/src/sail_mbox_lib.c
-)
-
-# Create sail_umd static library from sail-mailbox sources
-add_library(sail_umd STATIC ${RTSS_MAILBOX_SOURCES})
-
-# Set include directories for the sail_umd library
-target_include_directories(sail_umd PUBLIC
-    ${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/include
-    ${WORKDIR}/sail-mailbox/sail-mailbox-usr/sail-mb-umd/src
-)
 
 # Source files for the main daemon
 set(DAEMON_SOURCES
@@ -131,9 +113,10 @@ else()
     set(GLIB2_LIBRARIES "glib-2.0")
 endif()
 
-# Link rtss_can with the locally-built sail_umd library and other dependencies
+# Link rtss_can with the rtss_mailbox library and other dependencies
+# rtss_mailbox is installed to /usr/lib on the target sysroot; resolved by the cross-linker
 target_link_libraries(rtss_can
-    rtss_umd          # Locally-built static library
+    rtss_mailbox
     ${RT_LIBRARY}
     pthread
     ${GLIB2_LIBRARIES}
