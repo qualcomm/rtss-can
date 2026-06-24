@@ -390,11 +390,6 @@ Available contact and reporting channels found in the repository:
 - Security issues: see [`SECURITY.md`](SECURITY.md)
 - Code of conduct reports: `github.coc@qti.qualcomm.com`, as listed in [`CODE-OF-CONDUCT.md`](CODE-OF-CONDUCT.md)
 
-Notes:
-
-- `SECURITY.md` contains a GitHub issue URL with a `REPLACE-ME` placeholder.
-- `CONTRIBUTING.md` contains repository URL placeholders.
-- No general maintainer email address is specified.
 
 ## License
 
