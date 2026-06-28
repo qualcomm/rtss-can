@@ -4,9 +4,10 @@
 #ifndef RTSS_MB_WRAPPER_H
 #define RTSS_MB_WRAPPER_H
 
+#include <stddef.h>
 #include "rtss_can_structures.h"
 #include <rtss_mailbox_api.h>
-#include <stddef.h>
+
 
 /*
  * Open the TX mailbox channel (/dev/rtss/can0).
