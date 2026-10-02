@@ -67,6 +67,7 @@ struct can_controller_state {
 	time_t last_error_time;                 /* Last error timestamp */
 	int error_count;                        /* Consecutive error count */
 	int recovery_attempts;                  /* Number of recovery attempts */
+	int use_txfifo;                         /* Use TxFIFO (1) or TxBuffer (0) for TX */
 };
 
 /*
@@ -554,7 +555,6 @@ static int initialize_daemon(void)
 		snprintf(ctrl->vcan_name, sizeof(ctrl->vcan_name), "vcan%d",
 			 ctrl->vcan_base_index + i);
 		ctrl->socket_fd = -1;
-		ctrl->current_baud_config = DEFAULT_CAN_BAUD_CONFIG;
 		ctrl->error_count = 0;
 		ctrl->recovery_attempts = 0;
 
@@ -769,7 +769,10 @@ static int convert_socketcan_to_mailbox_packet(const struct canfd_frame *frame,
 	 * Controller 0->0, 1->5, 2->10, 3->15,
 	 * 4->20, 5->25, 6->30, 7->35
 	 */
-	packet->hth_object = controller_id * 5;
+	if (g_daemon_state.controllers[controller_id].use_txfifo)
+		packet->hth_object = controller_id * 5 + 1;
+	else
+		packet->hth_object = controller_id * 5;
 
 	/* Convert CAN ID */
 	packet->data.can_msg.mid = frame->can_id & CAN_EFF_MASK;
@@ -1277,6 +1280,24 @@ static int load_configuration(const char *config_file)
 				    controller_id, baud_config,
 				    get_baud_config_description(baud_config));
 			configs_loaded++;
+		} else if (sscanf(line, "controller_%d_txfifo=%d",
+				  &controller_id, &baud_config) == 2) {
+			/* Parse: controller_X_txfifo=Y (0=TxBuffer, 1=TxFIFO) */
+			if (controller_id < 0 || controller_id >= MAX_CAN_CONTROLLERS) {
+				LOG_ERROR_MSG("CONFIG",
+					    "Line %d: Invalid controller ID %d, skipping",
+					    line_number, controller_id);
+				parse_errors++;
+			} else if (baud_config < 0 || baud_config > 1) {
+				LOG_ERROR_MSG("CONFIG",
+					    "Line %d: Invalid txfifo %d for controller %d (valid: 0-1)",
+					    line_number, baud_config, controller_id);
+				parse_errors++;
+			} else {
+				g_daemon_state.controllers[controller_id].use_txfifo = baud_config;
+				LOG_INFO_MSG("CONFIG", "Controller %d: TX buffer type = %s",
+					    controller_id, baud_config ? "TxFIFO" : "TxBuffer");
+			}
 		} else {
 			/* sscanf failed - check if it's a malformed controller line */
 			char *trimmed = line;
