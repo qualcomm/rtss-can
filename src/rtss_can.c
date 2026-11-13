@@ -51,6 +51,20 @@
 #define RTSS_TIMEOUT_MS         2000
 #define INTERFACE_CHECK_INTERVAL_S  5
 #define MAX_RECOVERY_ATTEMPTS   5
+#define DEVICE_TREE_MODEL_PATH  "/sys/firmware/devicetree/base/model"
+#define DEVICE_TREE_MODEL_MAX_LEN 256
+#define LEMANS_EVK              "Lemans EVK"
+#define LEMANS_EVK_IFP          "Lemans-evk IFP"
+#define MONACO_EVK              "Monaco EVK"
+#define MONACO_EVK_IFP          "Monaco-evk IFP"
+
+enum board_model {
+	BOARD_MODEL_UNKNOWN,
+	BOARD_MODEL_LEMANS_EVK,
+	BOARD_MODEL_LEMANS_EVK_IFP,
+	BOARD_MODEL_MONACO_EVK,
+	BOARD_MODEL_MONACO_EVK_IFP,
+};
 
 /*
  * @brief CAN Controller State
@@ -121,6 +135,7 @@ static void signal_handler(int sig);
 static void print_usage(const char *program_name);
 static int parse_command_line(int argc, char *argv[]);
 static int load_configuration(const char *config_file);
+static int select_active_controllers_from_model(void);
 static void *RxThreadHandler(void *pArg);
 
 /*
@@ -1202,7 +1217,7 @@ static void print_usage(const char *program_name)
 /*
  * @brief Load configuration from file
  *
- * Parses the configuration file and loads per-controller baud rate settings.
+ * Detects the board controller count and loads per-controller baud rate settings.
  * Simple INI-style parser that reads controller_X_baudrate=Y entries.
  *
  * @param config_file Configuration file path
@@ -1219,6 +1234,7 @@ static int load_configuration(const char *config_file)
 	int parse_errors = 0;
 	int i;
 	int active_controllers = 0;
+	int ret;
 
 	LOG_INFO_MSG("CONFIG", "Loading configuration from %s", config_file);
 
@@ -1240,20 +1256,6 @@ static int load_configuration(const char *config_file)
 		/* Skip comments and empty lines */
 		if (line[0] == '#' || line[0] == '\n' || line[0] == '[')
 			continue;
-
-		/* Parse: active_controllers=N */
-		if (sscanf(line, "active_controllers=%d", &active_controllers) == 1) {
-			if (active_controllers < 0 || active_controllers > MAX_CAN_CONTROLLERS) {
-				LOG_ERROR_MSG("CONFIG", "Invalid active_controllers=%d",
-					      active_controllers, MAX_CAN_CONTROLLERS);
-				parse_errors++;
-
-			} else {
-				LOG_INFO_MSG("CONFIG", "Active controllers set to %d",
-					     active_controllers);
-			}
-			continue;
-		}
 
 		/* Parse: controller_X_baudrate=Y */
 		int scan_result = sscanf(line, "controller_%d_baudrate=%d",
@@ -1321,35 +1323,89 @@ static int load_configuration(const char *config_file)
 		return -EINVAL;
 	}
 
-	/* Store active_controllers in daemon state */
-	g_daemon_state.active_controllers = active_controllers;
+	/* Read the runtime board model on every configuration load. */
+	ret = select_active_controllers_from_model();
+	if (ret != 0)
+		return ret;
 
-	/* Calculate VCAN base index based on active_controllers */
-	int vcan_base_index;
-
-	if (active_controllers > 0 && active_controllers <= MAX_CAN_CONTROLLERS) {
-		vcan_base_index = active_controllers;
-		LOG_INFO_MSG("CONFIG", "VCAN base index: %d active controllers: %d",
-			     vcan_base_index, active_controllers);
-	} else {
-		/* Use default if active_controllers wasn't set or is invalid */
-		vcan_base_index = VCAN_BASE_INDEX;
-		LOG_INFO_MSG("CONFIG", "Using default VCAN base index %d", vcan_base_index);
-	}
-
-	/* Enable controllers up to active_controllers, disable the rest, and set vcan_base_index */
-	for (i = 0; i < active_controllers && i < MAX_CAN_CONTROLLERS; i++) {
-		g_daemon_state.controllers[i].is_enabled = 1;
-		g_daemon_state.controllers[i].vcan_base_index = vcan_base_index;
-	}
-	for (i = active_controllers; i < MAX_CAN_CONTROLLERS; i++) {
-		g_daemon_state.controllers[i].is_enabled = 0;
-		LOG_INFO_MSG("CONFIG", "Controller %d disabled (beyond active_controllers=%d)",
-			     i, active_controllers);
+	active_controllers = g_daemon_state.active_controllers;
+	/* Internal VCAN nodes follow the active user VCAN nodes. */
+	for (i = 0; i < MAX_CAN_CONTROLLERS; i++) {
+		g_daemon_state.controllers[i].is_enabled = (i < active_controllers);
+		g_daemon_state.controllers[i].vcan_base_index = active_controllers;
 	}
 
 	LOG_INFO_MSG("CONFIG", "Active controllers: %d, Disabled controllers: %d",
 		     active_controllers, MAX_CAN_CONTROLLERS - active_controllers);
 
+	return 0;
+}
+
+/*
+ * Read the runtime model, identify the board, and select its controller count.
+ */
+static int select_active_controllers_from_model(void)
+{
+	char model[DEVICE_TREE_MODEL_MAX_LEN];
+	enum board_model board = BOARD_MODEL_UNKNOWN;
+	FILE *fp;
+	size_t model_len;
+	int active_controllers;
+
+	fp = fopen(DEVICE_TREE_MODEL_PATH, "rb");
+	if (!fp) {
+		LOG_ERROR_MSG("BOARD", "Unable to open %s: %s",
+			      DEVICE_TREE_MODEL_PATH, strerror(errno));
+		return -1;
+	}
+
+	model_len = fread(model, 1, sizeof(model) - 1, fp);
+	if (ferror(fp)) {
+		LOG_ERROR_MSG("BOARD", "Failed to read %s", DEVICE_TREE_MODEL_PATH);
+		fclose(fp);
+		return -EIO;
+	}
+	fclose(fp);
+
+	if (model_len < 2 || model_len == sizeof(model) - 1 ||
+	    model[model_len - 1] != '\0' ||
+	    memchr(model, '\0', model_len - 1) != NULL) {
+		LOG_ERROR_MSG("BOARD", "Empty, malformed, or oversized device model");
+		return -EINVAL;
+	}
+	model[--model_len] = '\0';
+
+	/* strcasestr compares case-insensitively; check IFP before plain EVK. */
+	if (strcasestr(model, LEMANS_EVK_IFP))
+		board = BOARD_MODEL_LEMANS_EVK_IFP;
+	else if (strcasestr(model, MONACO_EVK_IFP))
+		board = BOARD_MODEL_MONACO_EVK_IFP;
+	else if (strcasestr(model, LEMANS_EVK))
+		board = BOARD_MODEL_LEMANS_EVK;
+	else if (strcasestr(model, MONACO_EVK))
+		board = BOARD_MODEL_MONACO_EVK;
+
+	switch (board) {
+	case BOARD_MODEL_LEMANS_EVK_IFP:
+		active_controllers = 8;
+		break;
+	case BOARD_MODEL_MONACO_EVK_IFP:
+		active_controllers = 4;
+		break;
+	case BOARD_MODEL_LEMANS_EVK:
+	case BOARD_MODEL_MONACO_EVK:
+		active_controllers = 1;
+		break;
+	case BOARD_MODEL_UNKNOWN:
+	default:
+		active_controllers = 0;
+		LOG_ERROR_MSG("BOARD", "Unsupported device model '%s'; no active controller mapping",
+			      model);
+		return -ENODEV;
+	}
+
+	g_daemon_state.active_controllers = active_controllers;
+	LOG_INFO_MSG("BOARD", "Detected model '%s'; selected active_controllers=%d",
+		     model, active_controllers);
 	return 0;
 }
